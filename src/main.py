@@ -18,28 +18,30 @@ from PySide6.QtSvg import QSvgRenderer
 import json
 
 # --- Paths ---
-MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
-ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
-TIMO_DIR = ASSETS_DIR / "timo"      # Timo sprite frames for the dashboard
-FONTS_DIR = ASSETS_DIR / "fonts"      # optional: Fredoka + Nunito .ttf files
+# PyInstaller uses sys._MEIPASS to unpack bundled data (assets, models)
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys._MEIPASS)
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+
+MODEL_DIR = BASE_DIR / "models"
+ASSETS_DIR = BASE_DIR / "assets"
+TIMO_DIR = ASSETS_DIR / "timo"        
+FONTS_DIR = ASSETS_DIR / "fonts"      
 LANDMARKER_PATH = MODEL_DIR / "face_landmarker.task"
 IMAGE_MODEL_PATH = MODEL_DIR / "image_model.pt"
 TABULAR_MODEL_PATH = MODEL_DIR / "tabular_model.json"
 
-# --- Your own "complete" GIF is the celebration (task ticked, session finished) ---
 def complete_gif_path():
-    for name in ("complete.gif", "compleat.gif"):      # accepts the common misspelling too
+    for name in ("complete.gif", "compleat.gif"):      
         p = ASSETS_DIR / name
         if p.exists():
             return p
     return None
 
-
 _complete_ms = None
 
-
 def complete_gif_ms():
-    """How long the complete GIF takes to play once (milliseconds)."""
     global _complete_ms
     if _complete_ms is None:
         total = 0
@@ -52,8 +54,6 @@ def complete_gif_ms():
         _complete_ms = int(min(3500, max(1000, total))) if total else 1500
     return _complete_ms
 
-
-# --- Dialogue Lines ---
 DIALOGUES = {
     "focused": ["Keep it up!", "You're in the zone!", "Nice focus.", "Great job!", "Let's go!"],
     "distracted_1": ["Eyes on the screen!", "Lost in thought?", "Let's get back to it."],
@@ -61,21 +61,15 @@ DIALOGUES = {
     "away": ["Where did you go?", "I'll be here when you get back.", "Taking a break?"]
 }
 
-# --- Heavy libraries and models: loaded in the background right after the window appears ---
-# cv2, mediapipe, ultralytics (torch) and xgboost take several seconds to import, so they are
-# not imported at the top of the file. The window opens first, then this loads everything once.
 cv2 = mp = mp_python = mp_vision = YOLO = xgb = None
 
-
 class ML:
-    """Models shared with the camera thread."""
     ready = False
     error = None
     image_model = None
     tabular_model = None
     landmarker = None
     t0 = time.time()
-
 
 def _import_ml_libraries():
     global cv2, mp, mp_python, mp_vision, YOLO, xgb
@@ -87,12 +81,11 @@ def _import_ml_libraries():
     import xgboost as _xgb
     cv2, mp, mp_python, mp_vision, YOLO, xgb = _cv2, _mp, _mp_python, _mp_vision, _YOLO, _xgb
 
-
 class ModelLoader(QObject):
     loaded = Signal(bool)
 
     def start(self):
-        threading.Thread(target=self._run, daemon=True).start()   # daemon: never blocks closing the app
+        threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self):
         t = time.time()
@@ -108,7 +101,6 @@ class ModelLoader(QObject):
                 num_faces=1, running_mode=mp_vision.RunningMode.VIDEO
             )
             ML.landmarker = mp_vision.FaceLandmarker.create_from_options(options)
-            # warm-up: the very first prediction is slow, so do it now instead of during a session
             ML.image_model(np.zeros((480, 640, 3), np.uint8), verbose=False)
             ML.tabular_model.predict_proba(np.array([[0.0, 0.0]]))
             ML.t0 = time.time()
@@ -119,19 +111,13 @@ class ModelLoader(QObject):
             print(f"Timo: could not load the focus models: {exc}")
         self.loaded.emit(ML.ready)
 
-
 def open_camera():
-    """DirectShow opens a webcam much faster than the default backend on Windows."""
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW) if sys.platform == "win32" else cv2.VideoCapture(0)
     if not cap.isOpened():
         cap.release()
         cap = cv2.VideoCapture(0)
     return cap
 
-
-# --- Background Vision Thread ---
-# Models are already loaded (see above). This thread only opens the camera when a focus
-# session starts and releases it as soon as the session pauses, ends or is reset.
 class VisionWorker(QThread):
     state_changed = Signal(str)
 
@@ -143,7 +129,7 @@ class VisionWorker(QThread):
     def reset_state(self, keep_calibration=False):
         now = time.time()
         keep = (keep_calibration and getattr(self, "is_calibrated", False)
-                and now - getattr(self, "calibrated_at", 0.0) < 1800)   # reuse a recent calibration
+                and now - getattr(self, "calibrated_at", 0.0) < 1800)
         self.last_face_time = now
         if not keep:
             self.calibration_frames = []
@@ -178,10 +164,9 @@ class VisionWorker(QThread):
         if self.isRunning():
             self.wait(4000)
 
-    stop = stop_camera          # old name, still used when the window closes
+    stop = stop_camera
 
     def run(self):
-        # If the models are still loading (first seconds after launch), wait for them here.
         while self.running and not ML.ready and ML.error is None:
             self.msleep(100)
         if not self.running:
@@ -271,10 +256,8 @@ class VisionWorker(QThread):
 
                 self.msleep(50)
         finally:
-            cap.release()           # the camera light goes off here
+            cap.release()
 
-
-# --- Timo palette and fonts ---
 C = {
     "bg": "#eaf3fb", "card": "#ffffff", "panel": "#f3f8fd", "ink": "#17324b", "muted": "#5d7891",
     "line": "#d3e3f0", "accent": "#2f67a0", "soft": "#e2eef9", "btn_top": "#3a76b0", "btn_bottom": "#2a5b8d",
@@ -286,13 +269,10 @@ BREAK_OPTIONS = [5, 10, 15]
 SAMPLE_TASKS = ["Outline the introduction", "Reply to two emails", "Tidy the reading list"]
 STATE_FILE = Path.home() / ".timo_state.json"
 
-
 def load_app_fonts():
-    """Loads any .ttf/.otf you drop into assets/fonts (Fredoka and Nunito from Google Fonts)."""
     if FONTS_DIR.exists():
         for f in list(FONTS_DIR.glob("*.ttf")) + list(FONTS_DIR.glob("*.otf")):
             QFontDatabase.addApplicationFont(str(f))
-
 
 def make_font(families, px, weight=QFont.Weight.Normal, spacing=0.0):
     f = QFont()
@@ -303,14 +283,11 @@ def make_font(families, px, weight=QFont.Weight.Normal, spacing=0.0):
         f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
     return f
 
-
 def display_font(px):
     return make_font(DISPLAY_FAMILIES, px, QFont.Weight.DemiBold)
 
-
 def body_font(px, weight=QFont.Weight.DemiBold, spacing=0.0):
     return make_font(BODY_FAMILIES, px, weight, spacing)
-
 
 def eyebrow(text):
     lab = QLabel(text.upper())
@@ -318,8 +295,6 @@ def eyebrow(text):
     lab.setStyleSheet(f"color: {C['muted']};")
     return lab
 
-
-# --- Icons (SVG drawn at 2x so they stay crisp) ---
 SVG_LOGO = '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="13" stroke="currentColor" stroke-width="3"/><path d="M16 8v8" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M16 16l6 3" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>'
 SVG_RESET = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v5h5"/></svg>'
 SVG_SOUND_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></svg>'
@@ -327,7 +302,6 @@ SVG_SOUND_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 SVG_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
 SVG_CLOSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
 SVG_CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'
-
 
 def svg_pixmap(svg, size, color):
     if "xmlns" not in svg:
@@ -342,15 +316,11 @@ def svg_pixmap(svg, size, color):
     pm.setDevicePixelRatio(2)
     return pm
 
-
 def svg_icon(svg, size, color):
     return QIcon(svg_pixmap(svg, size, color))
 
-
-# --- Timo, animated ---
 class Stage(QWidget):
-    """Draws Timo on a soft ground shadow. Frames come from assets/timo/<kind>_<n>.png."""
-    RATIOS = {"idle": 1.0, "pause": 1.0, "focus": 0.86, "break": 0.78, "cheer": 0.86}   # share of the stage height
+    RATIOS = {"idle": 1.0, "pause": 1.0, "focus": 0.86, "break": 0.78, "cheer": 0.86}
     STEP_SECONDS = {"idle": 2.6, "pause": 1.8, "focus": 0.7, "break": 0.65, "cheer": 1.0}
     COUNTS = (("idle", 2), ("pause", 2), ("focus", 5), ("break", 9), ("cheer", 1))
 
@@ -358,9 +328,9 @@ class Stage(QWidget):
         super().__init__(parent)
         self.setMinimumSize(180, 120)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.movie = None         # complete.gif, used while kind == "cheer"
-        self.boost = 1.0          # the small floating card sets this above 1 so Timo fills his box
-        self.hop = 22             # how high Timo jumps when he cheers (pixels at full size)
+        self.movie = None         
+        self.boost = 1.0          
+        self.hop = 22             
         self.frames = {}
         self.kind = "idle"
         self.idx = 0
@@ -425,9 +395,8 @@ class Stage(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         w, h = self.width(), self.height()
-        k = h / 310.0                      # everything below scales with the stage height
+        k = h / 310.0                      
 
-        # ground shadow
         p.save()
         p.translate(w / 2, h - 12 * k)
         p.scale(1, 0.16)
@@ -443,7 +412,7 @@ class Stage(QWidget):
         if self.kind == "cheer" and self.movie is not None and self.movie.isValid():
             gif = self.movie.currentPixmap()
             if not gif.isNull():
-                gh = min((h - 24 * k) * 0.86, gif.height() * 2.0)      # do not blow a small GIF up too far
+                gh = min((h - 24 * k) * 0.86, gif.height() * 2.0)      
                 gw = gif.width() * gh / gif.height()
                 if gw > w - 8:
                     gw = w - 8
@@ -456,10 +425,10 @@ class Stage(QWidget):
             return
         pm = frames[min(self.idx, len(frames) - 1)]
         target_h = max(40.0, (h - 24 * k) * self.RATIOS[self.kind] * self.boost)
-        if self.kind == "cheer":           # leave head room so the jump is not cut off
+        if self.kind == "cheer":           
             target_h = min(target_h, h - 16 * k - self.hop * k - 4)
         target_w = pm.width() * target_h / pm.height()
-        if target_w > w - 8:               # never wider than the stage
+        if target_w > w - 8:               
             target_w = w - 8
             target_h = pm.height() * target_w / pm.width()
         if self.kind == "cheer":
@@ -468,7 +437,6 @@ class Stage(QWidget):
             offset = (-math.sin(self.phase * 1.75) * 4 - 4) * k
         target = QRectF((w - target_w) / 2, h - 16 * k - target_h + offset, target_w, target_h)
         p.drawPixmap(target, pm, QRectF(pm.rect()))
-
 
 class Dots(QWidget):
     def __init__(self, parent=None):
@@ -489,7 +457,6 @@ class Dots(QWidget):
             p.setPen(QPen(accent, 1.5))
             p.setBrush(QBrush(accent) if i < self.filled else Qt.NoBrush)
             p.drawEllipse(QRectF(x, 1.75, 8.5, 8.5))
-
 
 class CheckBox(QWidget):
     toggled = Signal(bool)
@@ -534,7 +501,6 @@ class CheckBox(QWidget):
         else:
             super().keyPressEvent(event)
 
-
 class TodoRow(QWidget):
     toggled = Signal(int, bool)
     deleted = Signal(int)
@@ -569,7 +535,6 @@ class TodoRow(QWidget):
         self.remove.setToolTip("Delete task")
         self.remove.clicked.connect(lambda: self.deleted.emit(self.todo_id))
         lay.addWidget(self.remove, 0, Qt.AlignVCenter)
-
 
 STYLE = f"""
 QMainWindow, QWidget#root {{ background: {C['bg']}; }}
@@ -612,13 +577,10 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 """
 
-
 def fmt_time(seconds):
     mins, secs = divmod(max(0, seconds), 60)
     return f"{mins:02d}:{secs:02d}"
 
-
-# --- Floating Companion (small Timo card in the screen corner) ---
 SVG_PAUSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M9 6v12M15 6v12"/></svg>'
 SVG_CHEVRON_UP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>'
 SVG_CHEVRON_DOWN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>'
@@ -632,7 +594,6 @@ QPushButton#miniPlus {{ background: {C['accent']}; border: none; border-radius: 
 QPushButton#miniPlus:hover {{ background: {C['btn_bottom']}; }}
 """
 
-
 class CompanionOverlay(QWidget):
     WIDTH = 256
 
@@ -642,9 +603,9 @@ class CompanionOverlay(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedWidth(self.WIDTH)
 
-        self.dashboard = None            # set by MainWindow so the to-do list stays in sync
+        self.dashboard = None            
         self.movie = None
-        self.base_anim = "away"       # what Timo should be doing when he is not cheering
+        self.base_anim = "away"       
         self._cheer_until = 0.0
         self.expanded = True
         self._placed = False
@@ -667,12 +628,11 @@ class CompanionOverlay(QWidget):
         lay.setContentsMargins(10, 8, 10, 10)
         lay.setSpacing(6)
 
-        # header: character on the left, mode + timer + task on the right
         header = QHBoxLayout()
         header.setSpacing(8)
 
         self.sprite_label = QLabel()
-        self.sprite_label.setFixedSize(116, 116)      # Timo is the main thing on this card
+        self.sprite_label.setFixedSize(116, 116)      
         self.sprite_label.setAlignment(Qt.AlignCenter)
         self.sprite = Stage()
         self.sprite.setMinimumSize(0, 0)
@@ -681,8 +641,8 @@ class CompanionOverlay(QWidget):
         self.sprite.hop = 38
         self.sprite_stack = QStackedWidget()
         self.sprite_stack.setFixedSize(116, 116)
-        self.sprite_stack.addWidget(self.sprite)        # page 0: sharp Timo frames (assets/timo)
-        self.sprite_stack.addWidget(self.sprite_label)  # page 1: old GIFs (distracted / away)
+        self.sprite_stack.addWidget(self.sprite)        
+        self.sprite_stack.addWidget(self.sprite_label)  
         header.addWidget(self.sprite_stack)
 
         right = QVBoxLayout()
@@ -722,7 +682,6 @@ class CompanionOverlay(QWidget):
         header.addLayout(right, 1)
         lay.addLayout(header)
 
-        # speech line (the camera reactions land here)
         self.speech = QLabel("Ready...")
         self.speech.setObjectName("bubble")
         self.speech.setWordWrap(True)
@@ -730,7 +689,6 @@ class CompanionOverlay(QWidget):
         self.speech.setFont(body_font(11, QFont.Weight.Bold))
         lay.addWidget(self.speech)
 
-        # to-do list
         self.todo_box = QWidget()
         box = QVBoxLayout(self.todo_box)
         box.setContentsMargins(0, 0, 0, 0)
@@ -748,7 +706,7 @@ class CompanionOverlay(QWidget):
         self.todo_scroll = QScrollArea()
         self.todo_scroll.setWidgetResizable(True)
         self.todo_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.todo_scroll.setFixedHeight(68)       # about 2 rows, scroll for more
+        self.todo_scroll.setFixedHeight(68)       
         inner = QWidget()
         self.todo_layout = QVBoxLayout(inner)
         self.todo_layout.setContentsMargins(0, 0, 4, 0)
@@ -776,7 +734,6 @@ class CompanionOverlay(QWidget):
         box.addLayout(add_row)
         lay.addWidget(self.todo_box)
 
-    # ----- character -----
     PNG_KINDS = {"focused": "focus", "break": "break"}
     FALLBACK_KINDS = {"distracted": "pause", "away": "idle", "complete": "cheer"}
 
@@ -792,11 +749,10 @@ class CompanionOverlay(QWidget):
     def set_animation(self, state_name):
         self.base_anim = state_name
         if time.time() < self._cheer_until:
-            return                      # still hopping; the new state shows when the cheer ends
+            return                      
         self._apply_animation(state_name)
 
     def cheer_once(self, ms=1300):
-        """A short happy hop, then back to what Timo was doing."""
         self._cheer_until = time.time() + ms / 1000.0
         self._apply_animation("complete")
         QTimer.singleShot(ms + 60, self._end_cheer)
@@ -817,7 +773,7 @@ class CompanionOverlay(QWidget):
             self.movie.jumpToFrame(0)
             size = self.movie.currentImage().size()
             if size.width() > 0 and size.height() > 0:
-                size.scale(self.sprite_label.size(), Qt.KeepAspectRatio)   # keep Timo's proportions
+                size.scale(self.sprite_label.size(), Qt.KeepAspectRatio)   
                 self.movie.setScaledSize(size)
             self.sprite_label.setMovie(self.movie)
             self.movie.start()
@@ -829,7 +785,6 @@ class CompanionOverlay(QWidget):
         self.sprite_label.setStyleSheet("border: 1px dashed gray; color: gray; font-size: 10px;")
         self.sprite_stack.setCurrentIndex(1)
 
-    # ----- to-do list (shared with the dashboard) -----
     def sync(self):
         d = self.dashboard
         if d is None:
@@ -867,7 +822,7 @@ class CompanionOverlay(QWidget):
             self.todo_input.clear()
             self.dashboard.add_todo_text(text)
             bar = self.todo_scroll.verticalScrollBar()
-            QTimer.singleShot(40, lambda: bar.setValue(bar.maximum()))   # show the new task
+            QTimer.singleShot(40, lambda: bar.setValue(bar.maximum()))   
 
     def toggle_todos(self):
         self.expanded = not self.expanded
@@ -877,10 +832,9 @@ class CompanionOverlay(QWidget):
         self.collapse_btn.setToolTip("Hide the to-do list" if self.expanded else "Show the to-do list")
         self.adjustSize()
 
-    # ----- window behaviour -----
     def showEvent(self, event):
         super().showEvent(event)
-        if not self._placed:                      # first time: bottom-right corner of the screen
+        if not self._placed:                      
             self._placed = True
             self.adjustSize()
             geo = QGuiApplication.primaryScreen().availableGeometry()
@@ -915,13 +869,10 @@ class CompanionOverlay(QWidget):
         if self.dashboard is not None:
             self.dashboard.pause_from_overlay()
 
-
-# --- Main Dashboard Window (Timo layout) ---
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Timo")
-        # Opens small, never bigger than the screen, and everything scales when you resize it.
         self.BASE_W, self.BASE_H = 820, 580
         self.setMinimumSize(680, 520)
         geo = QGuiApplication.primaryScreen().availableGeometry()
@@ -931,8 +882,7 @@ class MainWindow(QMainWindow):
         self.move(geo.center().x() - w // 2, geo.center().y() - h // 2)
         self._last_scale = None
 
-        # state
-        self.mode = "focus"            # which tab is selected: "focus" or "break"
+        self.mode = "focus"            
         self.focus_min = 25
         self.break_min = 5
         self.task = ""
@@ -960,9 +910,8 @@ class MainWindow(QMainWindow):
         self.overlay.dashboard = self
 
         self.vision = VisionWorker()
-        self.vision.state_changed.connect(self.on_state_changed)   # camera stays off until a focus session starts
+        self.vision.state_changed.connect(self.on_state_changed)   
 
-        # Load the heavy models in the background just after the window is on screen.
         self.models_loading = True
         self.loader = ModelLoader()
         self.loader.loaded.connect(self._on_models_loaded)
@@ -971,7 +920,6 @@ class MainWindow(QMainWindow):
         self.refresh()
         self._apply_scale()
 
-    # ----- persistence -----
     def _load_state(self):
         try:
             data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -990,7 +938,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    # ----- UI construction -----
     def _build_ui(self):
         root = QWidget()
         root.setObjectName("root")
@@ -1203,7 +1150,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.time_label)
 
         self.stage = Stage()
-        lay.addWidget(self.stage, 1)          # the stage takes whatever space is left
+        lay.addWidget(self.stage, 1)          
 
         self.task_label = QLabel("")
         self.task_label.setAlignment(Qt.AlignCenter)
@@ -1212,7 +1159,6 @@ class MainWindow(QMainWindow):
         self.task_label.setStyleSheet(f"color: {C['ink']};")
         lay.addWidget(self.task_label)
 
-        # Kept under this name so the overlay and older code can still set a status line.
         self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setWordWrap(True)
@@ -1245,7 +1191,6 @@ class MainWindow(QMainWindow):
         lay.addLayout(dots_row)
         return main
 
-    # ----- responsive sizing -----
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "time_label"):
@@ -1284,7 +1229,6 @@ class MainWindow(QMainWindow):
         return "idle"
 
     def celebrate_task(self):
-        """Timo jumps for joy each time a task is ticked off."""
         ms = complete_gif_ms()
         self.task_cheer_until = time.time() + ms / 1000.0
         self.stage.set_kind("cheer")
@@ -1296,7 +1240,6 @@ class MainWindow(QMainWindow):
         if time.time() >= self.task_cheer_until:
             self.stage.set_kind(self._stage_kind())
 
-    # ----- timer + camera -----
     def _on_models_loaded(self, ok):
         self.models_loading = False
         if not ok:
@@ -1305,9 +1248,8 @@ class MainWindow(QMainWindow):
 
     def _stop_timer(self):
         self.pomodoro_timer.stop()
-        self.vision.stop_camera()          # no timer running, no camera
+        self.vision.stop_camera()
 
-    # ----- helpers -----
     def total_seconds(self):
         return (self.focus_min if self.mode == "focus" else self.break_min) * 60
 
@@ -1395,7 +1337,6 @@ class MainWindow(QMainWindow):
         self.count_label.setText(f"{done} of {len(self.todos)} done" if self.todos else "")
         self.sample_label.setVisible(bool(self.sample and self.todos) and self.height() >= 600)
 
-    # ----- to-do list -----
     def add_todo(self):
         text = self.todo_input.text().strip()
         if text:
@@ -1414,7 +1355,7 @@ class MainWindow(QMainWindow):
                 t["done"] = state
         self.sample = False
         self.refresh()
-        if state:                          # ticked, not unticked
+        if state:                          
             self.celebrate_task()
 
     def on_todo_deleted(self, todo_id):
@@ -1422,7 +1363,6 @@ class MainWindow(QMainWindow):
         self.sample = False
         self.refresh()
 
-    # ----- controls -----
     def set_mode(self, mode):
         if mode == self.mode:
             return
@@ -1476,7 +1416,6 @@ class MainWindow(QMainWindow):
             self.start_break()
 
     def pause_from_overlay(self):
-        """Called from the overlay's right-click menu."""
         self._stop_timer()
         self.note = "Paused. Press resume to continue."
         self.refresh()
@@ -1484,7 +1423,6 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
-    # ----- session flow (same behaviour as before: dashboard hides, overlay takes over) -----
     def start_focus(self, resume=False):
         self.mode = "focus"
         self.timer_state = "FOCUS"
@@ -1493,7 +1431,7 @@ class MainWindow(QMainWindow):
         self.note = ""
         self.celebrate_until = 0.0
         self.pomodoro_timer.start(1000)
-        self.vision.start_camera()         # camera turns on only now
+        self.vision.start_camera()         
 
         self.hide()
         self.overlay.show()
@@ -1508,7 +1446,7 @@ class MainWindow(QMainWindow):
         if not resume:
             self.time_left = self.break_min * 60
         self.note = ""
-        self.vision.stop_camera()          # breaks are camera-free
+        self.vision.stop_camera()          
         self.pomodoro_timer.start(1000)
 
         self.hide()
@@ -1558,12 +1496,11 @@ class MainWindow(QMainWindow):
         time_since_reaction = now - self.overlay.last_reaction_time
 
         if self.timer_state != "FOCUS":
-            return                          # ignore late camera results after a pause or break
+            return                          
 
         if state == "FOCUSED":
             if self.timer_state != "COMPLETE":
                 self.overlay.set_animation("focused")
-            # Change to a new encouraging message instead of clearing it
             if time_since_reaction > 3.0:
                 self.speak(random.choice(DIALOGUES["focused"]))
             self.overlay.distraction_count = 0
@@ -1585,7 +1522,6 @@ class MainWindow(QMainWindow):
     def speak(self, text):
         self.overlay.speech.setText(text)
         self.overlay.last_reaction_time = time.time()
-        # The text stays on screen until the state changes.
 
     def closeEvent(self, event):
         self._save_state()
@@ -1597,10 +1533,19 @@ class MainWindow(QMainWindow):
             pass
         event.accept()
 
-
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     load_app_fonts()
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("timo.focus.companion")
+        except Exception:
+            pass
+    icon_path = ASSETS_DIR / "timo.ico"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     def sigint_handler(*args):
         print("\n\n⛔ Caught Ctrl+C. Shutting down gracefully...")
