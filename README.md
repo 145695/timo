@@ -23,12 +23,11 @@ If you lose focus, Timo will gently nudge you with funny animations and encourag
 
 ## 🌟 Features
 
-- **🧠 Smart AI Fusion:** Timo doesn't just guess. He uses a custom-trained **YOLO** image model combined with an **XGBoost** model that reads your head pose. It's like having a tiny data scientist in your clock!
-- **🎯 Auto-Calibration:** Sit in front of the camera for 15 seconds, and Timo learns your natural resting face so he doesn't falsely accuse you of slacking off.
-- **🍅 Pomodoro Magic:** Built-in 25/5 focus and break timers. 
-- **📝 Session To-Do List:** Add tasks for your session. When you tick them off, Timo does a happy little jump to celebrate!
-- **🎨 Cute Animations:** Timo reads a book when you focus, looks grumpy when you get distracted, and meditates when it's time to rest.
-- **🛑 Ctrl+C Support:** For the devs, you can safely kill the app from the terminal without it freezing.
+- ** Smart AI Fusion:** Timo doesn't just guess. He uses a custom-trained **YOLO** image model combined with an **XGBoost** model that reads your head pose. It's like having a tiny data scientist in your clock!
+- ** Auto-Calibration:** Sit in front of the camera for 15 seconds, and Timo learns your natural resting face so he doesn't falsely accuse you of slacking off.
+- ** Pomodoro Magic:** Built-in 25/5 focus and break timers. 
+- ** Session To-Do List:** Add tasks for your session. When you tick them off, Timo does a happy little jump to celebrate!
+- ** Cute Animations:** Timo reads a book when you focus, looks grumpy when you get distracted, and meditates when it's time to rest.
 
 ---
 
